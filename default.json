@@ -1,0 +1,30 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Bump the pins on shane/workflows from the forge's own tags",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Workflows called from shane/workflows",
+      "managerFilePatterns": [
+        "/(^|/)\\.forgejo/workflows/[^/]+\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "uses: (?<depName>shane/workflows)/\\S+@(?<currentValue>v\\d+\\.\\d+\\.\\d+)"
+      ],
+      "datasourceTemplate": "forgejo-tags",
+      "registryUrlTemplate": "https://git.shaneplunkett.com"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "github-actions looks shane/workflows up on github.com, where shane is someone else",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchDepNames": [
+        "shane/workflows"
+      ],
+      "enabled": false
+    }
+  ]
+}
