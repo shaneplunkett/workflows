@@ -199,7 +199,7 @@ jobs:
           warnings="$(cat "$CLOSURES/warnings.md" 2> /dev/null || echo "None.")"
           if [ -n "$NOTES" ]; then
             notes="$(cat "$CLOSURES/notes.md" 2> /dev/null || echo "Couldn't read the changelogs. The update workflow's log has the error.")"
-            notes="$(printf '### Changelogs\n\nAsk an agent to triage these with the flake-update skill.\n\n%s\n\n' "$notes")"
+            notes="$(printf '### Changelogs\n\nAsk an agent to triage these with the flake-update skill.\n\n%s' "$notes")"$'\n\n'
           else
             notes=""
           fi
