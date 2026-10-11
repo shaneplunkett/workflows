@@ -1,0 +1,46 @@
+# Builds every host in the caller's hydraJobs on the homelab builder, whose
+# store is the binary cache at cache.shaneplunkett.com, one job per host. A
+# pull request just checks the build. A push also roots each result in the
+# runner's state directory, under the caller's repo name, so the builder's
+# weekly GC keeps the latest build of each host in the cache.
+on:
+  workflow_call:
+
+jobs:
+  hosts:
+    runs-on: nix
+    outputs:
+      hosts: ${{ steps.list.outputs.hosts }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: List the hosts
+        id: list
+        run: echo "hosts=$(nix eval --json .#hydraJobs --apply builtins.attrNames)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: hosts
+    runs-on: nix
+    strategy:
+      fail-fast: false
+      matrix:
+        host: ${{ fromJSON(needs.hosts.outputs.hosts) }}
+    env:
+      HOST: ${{ matrix.host }}
+      ROOTS: /var/lib/forgejo-runner/builder/roots
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build
+        run: nix build --no-link ".#hydraJobs.$HOST"
+
+      - name: Keep it in the cache
+        if: github.event_name == 'push'
+        run: |
+          roots="$ROOTS/${GITHUB_REPOSITORY#*/}"
+          mkdir -p "$roots"
+          nix build --out-link "$roots/$HOST" ".#hydraJobs.$HOST"

@@ -24,6 +24,26 @@ to the workflow file that starts the run.
 To release a change, merge it, then tag `main` with the next version and move
 each caller's pin in its own pull request.
 
+## build.yml
+
+The build check: one job per host in the caller's `hydraJobs`, each its
+own check on the pull request. `fail-fast` is off, so one broken host doesn't
+hide the others. On a push it also roots each build at
+`/var/lib/forgejo-runner/builder/roots/<repo>/<host>`, so the builder's
+weekly GC keeps it in the cache. A repo calls it from a workflow on
+`pull_request`, plus `push` to `main` if it wants that.
+
+```yaml
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    uses: shane/workflows/.forgejo/workflows/build.yml@v1.1.0
+```
+
 ## flake-update.yml
 
 The weekly `nix flake update` pull request, opened as `forge-bot`. A repo
