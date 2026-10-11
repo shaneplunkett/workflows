@@ -227,3 +227,13 @@ jobs:
             -d "$(jq -n --arg state "$state" --arg context "$CHECK" --arg url "$RUN" --arg description "$description" \
               '{state: $state, context: $context, target_url: $url, description: $description}')" \
             "$api/statuses/$HEAD_SHA" > /dev/null
+
+      # The before and after out-links are GC roots for every host's closure,
+      # so leaving them behind pins tens of gigabytes until something sweeps
+      # the runner's TMPDIR.
+      - name: Clean up
+        if: always()
+        run: |
+          if [ -n "${CLOSURES:-}" ]; then
+            rm -rf "$CLOSURES"
+          fi
