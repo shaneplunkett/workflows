@@ -119,3 +119,8 @@ Inputs, all optional:
 - **A shallow checkout hides its history from a git worktree.** Nix then goes
   looking for the parent commit and fails, so flake refs into a worktree of
   the checkout say `?shallow=1`.
+- **`nix build -o` makes a GC root.** The before and after builds in
+  `flake-update.yml` link every host's closure from a temp dir, which pins
+  them until the dir is gone, so its last step deletes the dir even when an
+  earlier one failed. The runner's `TMPDIR` is in its state directory, swept
+  a day later, not the private `/tmp` that a restart empties.
