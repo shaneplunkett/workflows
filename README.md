@@ -78,6 +78,22 @@ jobs:
     uses: shane/workflows/.forgejo/workflows/build.yml@v1.2.0
 ```
 
+## check.yml
+
+The lint check: runs the caller's `scripts/check.sh` inside its flake's
+default dev shell, as one check on the pull request. That script is the
+caller's one gate, the same one its agents' Stop hook and pre-commit run, so
+the shell has to carry every tool it calls. Call it from the same workflow
+as `build.yml`, so one pin bump moves both:
+
+```yaml
+jobs:
+  build:
+    uses: shane/workflows/.forgejo/workflows/build.yml@v1.4.0
+  check:
+    uses: shane/workflows/.forgejo/workflows/check.yml@v1.4.0
+```
+
 ## flake-update.yml
 
 The weekly `nix flake update` pull request, opened as `forge-bot`. A repo
