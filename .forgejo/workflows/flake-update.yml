@@ -1,0 +1,227 @@
+# Weekly `nix flake update` of every input, for a repo whose flake lists the
+# hosts CI builds as `hydraJobs.<host>`. Pushes the bump first and opens a
+# pull request for it as forge-bot (or refreshes the open one), so the
+# caller's pull request checks run on its real head from the start. Then it
+# builds every host before and after on the homelab builder, fills the
+# description in with each host's package changes and each moved input, and
+# asks the reviewer. Its own flake-update check stays pending until the
+# description is done. The caller owns the schedule and the concurrency
+# group, so a second run cancels the first rather than racing it to push.
+on:
+  workflow_call:
+    inputs:
+      title:
+        description: Title of the pull request.
+        type: string
+        default: "flake.lock: update every input"
+      reviewer:
+        description: Who to ask for a review once the description is done. Empty asks no one.
+        type: string
+        default: metrokitten
+      branch:
+        description: Branch the update is pushed to.
+        type: string
+        default: update/flake-lock
+      notes:
+        description: >-
+          Script in the caller's repo that prints changelogs as markdown, given
+          the old and new flake.lock. Empty leaves the Changelogs section out.
+        type: string
+        default: ""
+
+jobs:
+  update:
+    runs-on: nix
+    env:
+      BRANCH: ${{ inputs.branch }}
+      REVIEWER: ${{ inputs.reviewer }}
+      TITLE: ${{ inputs.title }}
+      NOTES: ${{ inputs.notes }}
+      CHECK: flake-update
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Update the lock file
+        id: update
+        run: |
+          closures="$(mktemp -d)"
+          echo "CLOSURES=$closures" >> "$GITHUB_ENV"
+          echo "RUN=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+          git config user.name forge-bot
+          git config user.email forge-bot@noreply.shaneplunkett.com
+          nix flake update --commit-lock-file
+          if [ "$(git rev-parse HEAD)" = "$GITHUB_SHA" ]; then
+            echo "Everything is already up to date."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "HEAD_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          fi
+
+      - name: Push it and open or refresh the pull request
+        id: pr
+        if: steps.update.outputs.changed == 'true'
+        run: |
+          token="$(< /run/credentials/forgejo-runner-builder.service/forge-bot-token)"
+          echo "::add-mask::$token"
+          auth="Authorization: token $token"
+          api="$GITHUB_SERVER_URL/api/v1/repos/$GITHUB_REPOSITORY"
+
+          basic="$(printf 'forge-bot:%s' "$token" | base64 -w0)"
+          git -c http.extraHeader="Authorization: Basic $basic" \
+            push --force "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "HEAD:refs/heads/$BRANCH"
+
+          curl -sf -H "$auth" -H "Content-Type: application/json" \
+            -d "$(jq -n --arg context "$CHECK" --arg url "$RUN" --arg description "Run #$GITHUB_RUN_NUMBER is building every host" \
+              '{state: "pending", context: $context, target_url: $url, description: $description}')" \
+            "$api/statuses/$HEAD_SHA" > /dev/null
+
+          body="⏳ [Update run #$GITHUB_RUN_NUMBER]($RUN) is building every host. The package changes, changelogs and input changes appear here when it finishes."
+          number="$(curl -sf -H "$auth" "$api/pulls?state=open" \
+            | jq --arg branch "$BRANCH" '.[] | select(.head.ref == $branch) | .number')"
+          if [ -z "$number" ]; then
+            request="$(jq -n --arg branch "$BRANCH" --arg body "$body" \
+              --arg title "$TITLE" '{head: $branch, base: "main", title: $title, body: $body}')"
+            number="$(curl -sf -H "$auth" -H "Content-Type: application/json" \
+              -d "$request" "$api/pulls" | jq .number)"
+            echo "Opened pull request #$number."
+          else
+            curl -sf -X PATCH -H "$auth" -H "Content-Type: application/json" \
+              -d "$(jq -n --arg body "$body" '{body: $body}')" "$api/pulls/$number" > /dev/null
+            echo "Refreshed pull request #$number."
+          fi
+          echo "NUMBER=$number" >> "$GITHUB_ENV"
+
+      - name: List the input changes
+        if: steps.update.outputs.changed == 'true'
+        run: |
+          git show HEAD~1:flake.lock > "$CLOSURES/old.lock"
+          jq -r --slurpfile old "$CLOSURES/old.lock" '
+            .nodes as $nodes
+            | .nodes.root.inputs | to_entries[]
+            | .key as $name
+            | $nodes[.value].locked as $new
+            | ($old[0].nodes[$old[0].nodes.root.inputs[$name]].locked // {}) as $was
+            | select($was.rev != null and $was.rev != $new.rev)
+            | [$name, $new.type, ($new.url // "\($new.owner)/\($new.repo)"), $was.rev, $new.rev]
+            | @tsv' flake.lock > "$CLOSURES/moved.tsv"
+
+          while IFS=$'\t' read -r name type source was now; do
+            if [ "$type" = github ]; then
+              echo "**$name**: [${was:0:7}...${now:0:7}](https://github.com/$source/compare/$was...$now)" >> "$CLOSURES/inputs.md"
+            else
+              git clone -q --bare --filter=blob:none "$source" "$CLOSURES/$name.git"
+              printf '**%s**\n%s\n' "$name" "$(git -C "$CLOSURES/$name.git" log --format='- %h %s' "$was..$now")" >> "$CLOSURES/inputs.md"
+            fi
+            echo >> "$CLOSURES/inputs.md"
+          done < "$CLOSURES/moved.tsv"
+
+      - name: Build every host as it was
+        if: steps.update.outputs.changed == 'true'
+        run: |
+          git worktree add -q --detach "$CLOSURES/main" "$GITHUB_SHA"
+          nix eval --raw .#hydraJobs --apply 'jobs: toString (builtins.attrNames jobs)' \
+            | tr ' ' '\n' | sed 's/.*/&\thydraJobs.&/' > "$CLOSURES/hosts.tsv"
+          while IFS=$'\t' read -r host attr; do
+            nix build --option eval-cache false -o "$CLOSURES/before/$host" "git+file://$CLOSURES/main?shallow=1#$attr" \
+              < /dev/null 2> >(tee "$CLOSURES/before-$host.log" >&2)
+          done < "$CLOSURES/hosts.tsv"
+
+      - name: Build every host
+        id: build
+        if: steps.update.outputs.changed == 'true'
+        continue-on-error: true
+        run: |
+          while IFS=$'\t' read -r host attr; do
+            nix build --option eval-cache false -o "$CLOSURES/after/$host" ".#$attr" \
+              < /dev/null 2> >(tee "$CLOSURES/after-$host.log" >&2)
+          done < "$CLOSURES/hosts.tsv"
+
+      - name: List the new evaluation warnings
+        if: steps.update.outputs.changed == 'true'
+        continue-on-error: true
+        run: |
+          while IFS=$'\t' read -r host _; do
+            new="$(comm -13 \
+              <(grep -h 'evaluation warning:' "$CLOSURES/before-$host.log" | sort -u) \
+              <(grep -h 'evaluation warning:' "$CLOSURES/after-$host.log" | sort -u) || true)"
+            if [ -n "$new" ]; then
+              printf '**%s**\n%s\n\n' "$host" "$(sed 's/^/- /' <<< "$new")" >> "$CLOSURES/warnings.md"
+            fi
+          done < "$CLOSURES/hosts.tsv"
+
+      - name: Read the changelogs
+        if: steps.update.outputs.changed == 'true'
+        continue-on-error: true
+        run: |
+          if [ -n "$NOTES" ]; then
+            "./$NOTES" "$CLOSURES/old.lock" flake.lock > "$CLOSURES/notes.md"
+          fi
+
+      - name: List the package changes
+        if: steps.build.outcome == 'success'
+        run: |
+          unchanged=""
+          while IFS=$'\t' read -r host _; do
+            changes="$(NO_COLOR=1 nix store diff-closures "$CLOSURES/before/$host" "$CLOSURES/after/$host" \
+              | sed -E 's/\x1b\[[0-9;]*m//g; s/, [+-]?[0-9.]+ [KMG]?i?B$//' \
+              | grep '→' || true)"
+            if [ -n "$changes" ]; then
+              printf '**%s**\n%s\n\n' "$host" "$(sed 's/^/- /' <<< "$changes")" >> "$CLOSURES/changes.md"
+            else
+              unchanged="$unchanged $host"
+            fi
+          done < "$CLOSURES/hosts.tsv"
+          if [ -n "$unchanged" ]; then
+            echo "No package changes on:$unchanged" >> "$CLOSURES/changes.md"
+          fi
+
+      - name: Fill in the pull request
+        if: ${{ !cancelled() && steps.pr.outcome == 'success' }}
+        env:
+          BUILD: ${{ steps.build.outcome }}
+          JOB: ${{ job.status }}
+        run: |
+          token="$(< /run/credentials/forgejo-runner-builder.service/forge-bot-token)"
+          echo "::add-mask::$token"
+          auth="Authorization: token $token"
+          api="$GITHUB_SERVER_URL/api/v1/repos/$GITHUB_REPOSITORY"
+
+          case "$BUILD" in
+            success) status="✅ Every host builds." ;;
+            failure) status="❌ The build failed. [Update run #$GITHUB_RUN_NUMBER]($RUN) has the error." ;;
+            *) status="❌ [Update run #$GITHUB_RUN_NUMBER]($RUN) failed before it built every host. Its log has the error." ;;
+          esac
+          changes="$(cat "$CLOSURES/changes.md" 2> /dev/null || echo "No package list, because the build failed.")"
+          inputs="$(cat "$CLOSURES/inputs.md" 2> /dev/null || echo "None of this flake's own inputs moved.")"
+          warnings="$(cat "$CLOSURES/warnings.md" 2> /dev/null || echo "None.")"
+          if [ -n "$NOTES" ]; then
+            notes="$(cat "$CLOSURES/notes.md" 2> /dev/null || echo "Couldn't read the changelogs. The update workflow's log has the error.")"
+            notes="$(printf '### Changelogs\n\nAsk an agent to triage these with the flake-update skill.\n\n%s\n\n' "$notes")"
+          else
+            notes=""
+          fi
+          lock="$(git log -1 --format=%b)"
+          body="$(printf '%s\n\n### New evaluation warnings\n\n%s\n\n### Package changes\n\n%s\n\n%s### Input changes\n\n%s\n\n<details>\n<summary>Lock file</summary>\n\n%s\n\n</details>' \
+            "$status" "$warnings" "$changes" "$notes" "$inputs" "$lock")"
+
+          curl -sf -X PATCH -H "$auth" -H "Content-Type: application/json" \
+            -d "$(jq -n --arg body "$body" '{body: $body}')" "$api/pulls/$NUMBER" > /dev/null
+          echo "Filled in pull request #$NUMBER."
+
+          if [ -n "$REVIEWER" ]; then
+            curl -sf -H "$auth" -H "Content-Type: application/json" \
+              -d "$(jq -n --arg reviewer "$REVIEWER" '{reviewers: [$reviewer]}')" "$api/pulls/$NUMBER/requested_reviewers" > /dev/null
+          fi
+
+          if [ "$JOB" = success ]; then
+            state=success description="Run #$GITHUB_RUN_NUMBER filled in the description"
+          else
+            state=failure description="Run #$GITHUB_RUN_NUMBER failed"
+          fi
+          curl -sf -H "$auth" -H "Content-Type: application/json" \
+            -d "$(jq -n --arg state "$state" --arg context "$CHECK" --arg url "$RUN" --arg description "$description" \
+              '{state: $state, context: $context, target_url: $url, description: $description}')" \
+            "$api/statuses/$HEAD_SHA" > /dev/null
