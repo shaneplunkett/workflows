@@ -21,8 +21,21 @@ The called workflow runs as the caller: it checks out the caller's repo,
 caller keeps the triggers and any `concurrency:` group, because those belong
 to the workflow file that starts the run.
 
-To release a change, merge it, then tag `main` with the next version and move
-each caller's pin in its own pull request.
+To release a change, merge it, then tag `main` with the next version.
+Renovate opens the pull requests that move each caller's pin, as long as the
+caller's `renovate.json` extends this repo's preset:
+
+```json
+{
+  "extends": ["local>shane/workflows"]
+}
+```
+
+`default.json` is that preset. It reads the pins with the `forgejo-tags`
+datasource, and turns off the `github-actions` manager's lookup for
+`shane/workflows`, which goes to github.com, where `shane` is someone else.
+A repo that only wants its pins bumped also sets
+`"enabledManagers": ["custom.regex"]`.
 
 ## build.yml
 
