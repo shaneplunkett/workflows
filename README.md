@@ -41,7 +41,7 @@ A repo that only wants its pins bumped also sets
 
 The build check: one job per host in the caller's `hydraJobs`, each its
 own check on the pull request. `fail-fast` is off, so one broken host doesn't
-hide the others. On a push it also roots each build at
+hide the others. A build of `main` is also rooted at
 `/var/lib/forgejo-runner/builder/roots/<repo>/<host>`, so the builder's
 weekly GC keeps it in the cache. A repo calls it from a workflow on
 `pull_request`, plus `push` to `main` if it wants that.
@@ -54,7 +54,7 @@ on:
 
 jobs:
   build:
-    uses: shane/workflows/.forgejo/workflows/build.yml@v1.1.0
+    uses: shane/workflows/.forgejo/workflows/build.yml@v1.2.0
 ```
 
 ## flake-update.yml
@@ -88,6 +88,13 @@ Inputs, all optional:
 - **The API can't make an org public.** `PATCH /orgs/{org}` with
   `"visibility": "public"` returns 200 and changes nothing, because public is
   the zero value and Forgejo skips it. Use the org's Settings page.
+- **A called workflow only ever sees `workflow_call`.** `github.event_name`
+  inside it is never the caller's `push` or `pull_request`. `github.ref` is
+  the caller's, though: `refs/heads/main` on a push, `refs/pull/<n>/head` on
+  a pull request.
+- **Only literals reach a called workflow's inputs.** Forgejo expands it on
+  the server without the `github` context, so `with: { x: ${{ github.* }} }`
+  arrives empty and the input falls back to its default.
 - **A shallow checkout hides its history from a git worktree.** Nix then goes
   looking for the parent commit and fails, so flake refs into a worktree of
   the checkout say `?shallow=1`.

@@ -1,8 +1,9 @@
 # Builds every host in the caller's hydraJobs on the homelab builder, whose
-# store is the binary cache at cache.shaneplunkett.com, one job per host. A
-# pull request just checks the build. A push also roots each result in the
-# runner's state directory, under the caller's repo name, so the builder's
-# weekly GC keeps the latest build of each host in the cache.
+# store is the binary cache at cache.shaneplunkett.com, one job per host.
+# A build of main is also rooted in the runner's state directory, under the
+# caller's repo name, so the builder's weekly GC keeps the latest build of
+# each host in the cache. It goes by the ref, because inside a called
+# workflow the event is always workflow_call.
 on:
   workflow_call:
 
@@ -39,7 +40,7 @@ jobs:
         run: nix build --no-link ".#hydraJobs.$HOST"
 
       - name: Keep it in the cache
-        if: github.event_name == 'push'
+        if: github.ref == 'refs/heads/main'
         run: |
           roots="$ROOTS/${GITHUB_REPOSITORY#*/}"
           mkdir -p "$roots"
