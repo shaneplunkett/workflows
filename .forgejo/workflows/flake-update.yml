@@ -122,8 +122,10 @@ jobs:
         if: steps.update.outputs.changed == 'true'
         run: |
           git worktree add -q --detach "$CLOSURES/main" "$GITHUB_SHA"
-          nix eval --raw .#hydraJobs --apply 'jobs: toString (builtins.attrNames jobs)' \
-            | tr ' ' '\n' | sed 's/.*/&\thydraJobs.&/' > "$CLOSURES/hosts.tsv"
+          # jq ends every line with a newline. `nix eval --raw` doesn't, and
+          # `read` drops an unterminated last line, which skipped the last host.
+          nix eval --json .#hydraJobs --apply builtins.attrNames \
+            | jq -r '.[] | "\(.)\thydraJobs.\(.)"' > "$CLOSURES/hosts.tsv"
           while IFS=$'\t' read -r host attr; do
             nix build --option eval-cache false -o "$CLOSURES/before/$host" "git+file://$CLOSURES/main?shallow=1#$attr" \
               < /dev/null 2> >(tee "$CLOSURES/before-$host.log" >&2)
