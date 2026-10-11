@@ -37,6 +37,27 @@ datasource, and turns off the `github-actions` manager's lookup for
 A repo that only wants its pins bumped also sets
 `"enabledManagers": ["custom.regex"]`.
 
+## checkout
+
+`actions/checkout` as this forge needs it: pinned to v4.4.0, the newest
+release that works here, and with `persist-credentials: false`, so the job's
+token isn't left in the checkout's git config. Use it in place of
+`actions/checkout`:
+
+```yaml
+steps:
+  - uses: https://git.shaneplunkett.com/shane/workflows/checkout@v1.3.0
+```
+
+It takes `ref` and `fetch-depth`, like `actions/checkout`. A step's `uses:`
+needs the full URL, because a short `owner/repo` is looked up on Forgejo's
+own mirror at `data.forgejo.org`.
+
+The preset keeps Renovate's `actions/checkout` updates below v5. From v5 on,
+checkout stores the job's credentials in a separate file that git on the
+host runner never reads, so fetching from the forge fails with
+`could not read Username`. The workflows here pin the same release directly.
+
 ## build.yml
 
 The build check: one job per host in the caller's `hydraJobs`, each its

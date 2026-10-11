@@ -1,0 +1,22 @@
+name: checkout
+description: >-
+  actions/checkout, pinned to the newest release that works on this forge, and
+  without leaving the job's token in the repo's git config.
+inputs:
+  ref:
+    description: Branch, tag or commit to check out. Defaults to the one that triggered the run.
+    default: ""
+  fetch-depth:
+    description: Number of commits to fetch. 0 fetches all history.
+    default: "1"
+runs:
+  using: composite
+  steps:
+    # v5 and later keep the job's credentials in a separate file that git on
+    # the host runner never reads, so fetching from the forge fails with
+    # "could not read Username". v4 writes them into the repo's git config.
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      with:
+        ref: ${{ inputs.ref }}
+        fetch-depth: ${{ inputs.fetch-depth }}
+        persist-credentials: false
