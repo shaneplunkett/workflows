@@ -96,8 +96,8 @@ jobs:
 
 ## flake-update.yml
 
-The weekly `nix flake update` pull request, opened as `forge-bot`. A repo
-calls it from a workflow on `schedule` and `workflow_dispatch`, with
+The `nix flake update` pull request, opened as `forge-bot`. A repo calls it
+from a workflow on `schedule` and `workflow_dispatch`, with
 `concurrency: { group: flake-update, cancel-in-progress: true }` so a second
 run replaces the first.
 
@@ -115,6 +115,16 @@ Inputs, all optional:
 - **`notes`**, default empty. A script in the caller's repo that prints
   changelogs as markdown, given the old and new `flake.lock`. Empty leaves the
   Changelogs section out.
+- **`only`**, default empty. The flake inputs to update, space-separated.
+  Empty updates every input.
+- **`automerge`**, default `false`. Once every host builds, sets the pull
+  request to merge in the repo's default style when its required checks pass.
+  `flake-update` itself isn't a required check, so this is the last thing the
+  run does.
+
+A second caller for a few inputs, say one that another repo dispatches when it
+pushes, gives itself its own `branch` and `concurrency` group, so it never
+pushes over the weekly pull request.
 
 ## Gotchas
 

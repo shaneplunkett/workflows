@@ -1,12 +1,12 @@
-# Weekly `nix flake update` of every input, for a repo whose flake lists the
-# hosts CI builds as `hydraJobs.<host>`. Pushes the bump first and opens a
-# pull request for it as forge-bot (or refreshes the open one), so the
-# caller's pull request checks run on its real head from the start. Then it
-# builds every host before and after on the homelab builder, fills the
+# `nix flake update` of every input, or just the ones named, for a repo whose
+# flake lists the hosts CI builds as `hydraJobs.<host>`. Pushes the bump first
+# and opens a pull request for it as forge-bot (or refreshes the open one), so
+# the caller's pull request checks run on its real head from the start. Then
+# it builds every host before and after on the homelab builder, fills the
 # description in with each host's package changes and each moved input, and
 # asks the reviewer. Its own flake-update check stays pending until the
-# description is done. The caller owns the schedule and the concurrency
-# group, so a second run cancels the first rather than racing it to push.
+# description is done. The caller owns the schedule and the concurrency group,
+# so a second run cancels the first rather than racing it to push.
 on:
   workflow_call:
     inputs:
@@ -28,6 +28,16 @@ on:
           the old and new flake.lock. Empty leaves the Changelogs section out.
         type: string
         default: ""
+      only:
+        description: Flake inputs to update, space-separated. Empty updates every input.
+        type: string
+        default: ""
+      automerge:
+        description: >-
+          Merge the pull request, in the repo's default style, once its required
+          checks pass. Only when every host builds.
+        type: boolean
+        default: false
 
 jobs:
   update:
@@ -37,6 +47,8 @@ jobs:
       REVIEWER: ${{ inputs.reviewer }}
       TITLE: ${{ inputs.title }}
       NOTES: ${{ inputs.notes }}
+      ONLY: ${{ inputs.only }}
+      AUTOMERGE: ${{ inputs.automerge }}
       CHECK: flake-update
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -51,7 +63,8 @@ jobs:
           echo "RUN=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
           git config user.name forge-bot
           git config user.email forge-bot@noreply.shaneplunkett.com
-          nix flake update --commit-lock-file
+          read -ra only <<< "$ONLY"
+          nix flake update "${only[@]}" --commit-lock-file
           if [ "$(git rev-parse HEAD)" = "$GITHUB_SHA" ]; then
             echo "Everything is already up to date."
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -227,6 +240,18 @@ jobs:
             -d "$(jq -n --arg state "$state" --arg context "$CHECK" --arg url "$RUN" --arg description "$description" \
               '{state: $state, context: $context, target_url: $url, description: $description}')" \
             "$api/statuses/$HEAD_SHA" > /dev/null
+
+          if [ "$AUTOMERGE" = true ] && [ "$BUILD" = success ] && [ "$JOB" = success ]; then
+            style="$(curl -sf -H "$auth" "$api" | jq -r .default_merge_style)"
+            code="$(curl -s -o /dev/null -w '%{http_code}' -H "$auth" -H "Content-Type: application/json" \
+              -d "$(jq -n --arg style "$style" '{Do: $style, merge_when_checks_succeed: true}')" \
+              "$api/pulls/$NUMBER/merge")"
+            case "$code" in
+              2??) echo "Pull request #$NUMBER merges once its checks pass." ;;
+              409) echo "Pull request #$NUMBER is already set to merge once its checks pass." ;;
+              *) echo "Couldn't set pull request #$NUMBER to merge: HTTP $code."; exit 1 ;;
+            esac
+          fi
 
       # The before and after out-links are GC roots for every host's closure,
       # so leaving them behind pins tens of gigabytes until something sweeps
