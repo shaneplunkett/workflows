@@ -22,11 +22,14 @@ Callers pin a tag, so a change reaches a repo only when that repo's pin moves.
 ## Testing before a release
 
 Nothing here runs until a caller uses it. Push the change on a branch, then
-push a throwaway branch in a caller repo (nix-config is the quickest) with a
+push a throwaway branch in a caller repo (caboodle) with a
 `workflow_dispatch` workflow that uses this repo at your branch. Dispatch it,
 read the run's log, then delete both throwaway branches. Give
 `flake-update.yml` a test `branch`, `reviewer: ""` and a test `title`, so it
-opens its own pull request and leaves the real update alone.
+opens its own pull request and leaves the real update alone, and leave
+`automerge` off, since its pull requests always target `main`. Try a merge
+call on its own pull request into a throwaway base instead, with a `pending`
+commit status standing in for the checks.
 
 ## Pins that stay put
 
