@@ -60,9 +60,21 @@ host runner never reads, so fetching from the forge fails with
 
 ## build.yml
 
-The build check: one job per host in the caller's `hydraJobs`, each its
-own check on the pull request. `fail-fast` is off, so one broken host doesn't
-hide the others. A build of `main` is also rooted at
+The build check, and on a pull request the derivation diff: the hosts whose
+system derivation differs between the pull request's merge base and its
+head, which is the list of what merging it would rebuild. The `hosts` job
+evaluates the caller's `hydraJobs` at both commits and posts the list as one
+comment from `forge-bot`, which it edits on each push. The comment ends with
+the commit it's for, and Forgejo keeps its edit history. Then one job per
+host builds the hosts in the diff, each its own check on the pull request.
+`fail-fast` is off, so one broken host doesn't hide the others. An unchanged
+host is the very derivation `main` already built, so a pull request that
+changes no host builds nothing: the comment says so, and the one build job
+is a placeholder, `build (no changed hosts)`, whose steps all skip. Forgejo
+leaves a job with an empty matrix blocked for good, so the placeholder is
+what lets the run finish.
+
+A push to `main` builds every host, and roots each build at
 `/var/lib/forgejo-runner/builder/roots/<repo>/<host>`, so the builder's
 weekly GC keeps it in the cache. A repo calls it from a workflow on
 `pull_request`, plus `push` to `main` if it wants that.
@@ -77,6 +89,11 @@ jobs:
   build:
     uses: shane/workflows/.forgejo/workflows/build.yml@v1.2.0
 ```
+
+The comment comes from the `forge-bot` token the builder's runner holds as
+a credential, the same one `flake-update.yml` uses. Inside a called workflow
+only `github.ref` tells a pull request apart, so the pull request's number
+comes from it, and its base branch from the API.
 
 ## check.yml
 
