@@ -69,7 +69,10 @@ the commit it's for, and Forgejo keeps its edit history. Then one job per
 host builds the hosts in the diff, each its own check on the pull request.
 `fail-fast` is off, so one broken host doesn't hide the others. An unchanged
 host is the very derivation `main` already built, so a pull request that
-changes no host builds nothing and the comment says so.
+changes no host builds nothing: the comment says so, and the one build job
+is a placeholder, `build (no changed hosts)`, whose steps all skip. Forgejo
+leaves a job with an empty matrix blocked for good, so the placeholder is
+what lets the run finish.
 
 A push to `main` builds every host, and roots each build at
 `/var/lib/forgejo-runner/builder/roots/<repo>/<host>`, so the builder's

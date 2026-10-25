@@ -59,7 +59,13 @@ jobs:
             '[keys[] | select(in($head[0]) | not)]' "$work/base.json")"
           echo "Changed: $changed"
           echo "Removed: $removed"
-          echo "hosts=$changed" >> "$GITHUB_OUTPUT"
+          # A job with an empty matrix stays blocked for good, so when nothing
+          # changes the matrix gets one placeholder whose steps all skip.
+          if [ "$changed" = "[]" ]; then
+            echo 'hosts=["no changed hosts"]' >> "$GITHUB_OUTPUT"
+          else
+            echo "hosts=$changed" >> "$GITHUB_OUTPUT"
+          fi
 
           list() { jq -r 'map("`\(.)`") | join(", ")' <<< "$1"; }
           case "$(jq length <<< "$changed")" in
@@ -95,7 +101,6 @@ jobs:
 
   build:
     needs: hosts
-    if: needs.hosts.outputs.hosts != '[]'
     runs-on: nix
     strategy:
       fail-fast: false
@@ -106,10 +111,12 @@ jobs:
       ROOTS: /var/lib/forgejo-runner/builder/roots
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: matrix.host != 'no changed hosts'
         with:
           persist-credentials: false
 
       - name: Build
+        if: matrix.host != 'no changed hosts'
         run: nix build --no-link ".#hydraJobs.$HOST"
 
       - name: Keep it in the cache
