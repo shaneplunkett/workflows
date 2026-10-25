@@ -18,8 +18,9 @@ cue, and stays until the last bump is green.
    changes to the pieces it calls. Shane merges.
 2. Tag `main` with that version and push the tag. Tags are permanent: a
    follow-up fix is a new tag.
-3. Start Renovate (`ssh root@builder systemctl start renovate`) or wait for
-   Sunday's run. It opens a pin bump in every caller that extends the preset.
+3. Start Renovate (`ssh root@builder systemctl start renovate`). It opens a
+   pin bump in every caller that extends the preset, straight away: the
+   preset lifts the release age wait and the Sunday schedule for these pins.
    Watch them: the release is done when every bump is green, and Shane merges
    them.
 

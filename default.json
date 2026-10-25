@@ -17,6 +17,16 @@
   ],
   "packageRules": [
     {
+      "description": "The pins on shane/workflows move as soon as a tag exists. The tags are made on purpose by the release steps in AGENTS.md, so the release age wait and the Sunday batch guard nothing here.",
+      "matchDepNames": [
+        "shane/workflows"
+      ],
+      "minimumReleaseAge": null,
+      "schedule": [
+        "at any time"
+      ]
+    },
+    {
       "description": "The custom manager reads shane/workflows from the forge's tags. github-actions would look the short form up on github.com, where shane is someone else.",
       "matchManagers": [
         "github-actions"

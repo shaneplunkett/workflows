@@ -35,7 +35,11 @@ caller's `renovate.json` extends this repo's preset:
 datasource, and turns off the `github-actions` manager's lookup for
 `shane/workflows`, which goes to github.com, where `shane` is someone else.
 A repo that only wants its pins bumped also sets
-`"enabledManagers": ["custom.regex"]`.
+`"enabledManagers": ["custom.regex"]`. The preset also lifts the builder's
+one-day release age and Sunday schedule for these pins, so a bump opens
+as soon as Renovate runs after a tag: the tags are made on purpose, so the
+wait guards nothing, and without it a tag made after Sunday morning trailed
+by a week.
 
 ## checkout
 
