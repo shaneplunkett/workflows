@@ -9,15 +9,19 @@ you're changing first.
 ## Releasing
 
 Callers pin a tag, so a change reaches a repo only when that repo's pin moves.
+The agent that makes the change owns the release, with Shane's merge as its
+cue, and stays until the last bump is green.
 
-1. Land the change through a pull request, filed with the `file-pr` skill.
-   Shane merges.
-2. Tag `main` with the next version (patch for a fix, minor for something new,
-   major when a caller has to change) and push the tag. Tags are permanent:
-   a follow-up fix is a new tag.
+1. Land the change through a pull request, filed with the `pr` skill. Its
+   body names the bump (patch for a fix, minor for something new, major when
+   a caller has to change) and which callers feel it: a repo only feels
+   changes to the pieces it calls. Shane merges.
+2. Tag `main` with that version and push the tag. Tags are permanent: a
+   follow-up fix is a new tag.
 3. Start Renovate (`ssh root@builder systemctl start renovate`) or wait for
    Sunday's run. It opens a pin bump in every caller that extends the preset.
-   The release is done when those bumps are green.
+   Watch them: the release is done when every bump is green, and Shane merges
+   them.
 
 ## Testing before a release
 
