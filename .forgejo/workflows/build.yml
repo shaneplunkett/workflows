@@ -1,9 +1,13 @@
-# Builds every host in the caller's hydraJobs on the homelab builder, whose
-# store is the binary cache at cache.shaneplunkett.com, one job per host.
-# A build of main is also rooted in the runner's state directory, under the
-# caller's repo name, so the builder's weekly GC keeps the latest build of
-# each host in the cache. It goes by the ref, because inside a called
-# workflow the event is always workflow_call.
+# Builds the caller's hydraJobs on the homelab builder, whose store is the
+# binary cache at cache.shaneplunkett.com, one job per host. On a pull request
+# it first works out the derivation diff: the hosts whose system derivation
+# differs between the pull request's merge base and its head. It posts the
+# diff as one comment from forge-bot, edited on each push, and builds only
+# those hosts, since an unchanged host is the very derivation main already
+# built. A push to main builds every host and roots each build in the
+# runner's state directory, under the caller's repo name, so the builder's
+# weekly GC keeps the latest build of each host in the cache. Both go by the
+# ref, because inside a called workflow the event is always workflow_call.
 on:
   workflow_call:
 
@@ -16,13 +20,82 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+          fetch-depth: 0
 
-      - name: List the hosts
-        id: list
+      - name: List every host
+        id: all
+        if: ${{ !startsWith(github.ref, 'refs/pull/') }}
         run: echo "hosts=$(nix eval --json .#hydraJobs --apply builtins.attrNames)" >> "$GITHUB_OUTPUT"
+
+      - name: List the hosts the pull request changes
+        id: diff
+        if: startsWith(github.ref, 'refs/pull/')
+        run: |
+          number="${GITHUB_REF#refs/pull/}"
+          number="${number%/head}"
+          token="$(< /run/credentials/forgejo-runner-builder.service/forge-bot-token)"
+          echo "::add-mask::$token"
+          auth="Authorization: token $token"
+          api="$GITHUB_SERVER_URL/api/v1/repos/$GITHUB_REPOSITORY"
+          run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_NUMBER"
+
+          base_ref="$(curl -sf -H "$auth" "$api/pulls/$number" | jq -r .base.ref)"
+          basic="$(printf 'forge-bot:%s' "$token" | base64 -w0)"
+          git -c http.extraHeader="Authorization: Basic $basic" \
+            fetch -q "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "refs/heads/$base_ref"
+          base="$(git merge-base FETCH_HEAD HEAD)"
+          work="$(mktemp -d)"
+          git worktree add -q --detach "$work/base" "$base"
+
+          drvs='jobs: builtins.mapAttrs (_: job: job.drvPath) jobs'
+          nix eval --json "git+file://$work/base#hydraJobs" --apply "$drvs" > "$work/base.json" &
+          base_eval=$!
+          nix eval --json .#hydraJobs --apply "$drvs" > "$work/head.json"
+          wait "$base_eval"
+
+          changed="$(jq -c --slurpfile base "$work/base.json" \
+            '[to_entries[] | select(.value != $base[0][.key]) | .key]' "$work/head.json")"
+          removed="$(jq -c --slurpfile head "$work/head.json" \
+            '[keys[] | select(in($head[0]) | not)]' "$work/base.json")"
+          echo "Changed: $changed"
+          echo "Removed: $removed"
+          echo "hosts=$changed" >> "$GITHUB_OUTPUT"
+
+          list() { jq -r 'map("`\(.)`") | join(", ")' <<< "$1"; }
+          case "$(jq length <<< "$changed")" in
+            0) summary="**No hosts change.**" ;;
+            1) summary="**1 host changes:** $(list "$changed")" ;;
+            *) summary="**$(jq length <<< "$changed") hosts change:** $(list "$changed")" ;;
+          esac
+          if [ "$removed" != "[]" ]; then
+            summary="$summary"$'\n\n'"Removed: $(list "$removed")"
+          fi
+          body="$(printf '<!-- derivation-diff -->\n### Derivation diff\n\n%s\n\n<sub>Updated for %s by [run #%s](%s).</sub>' \
+            "$summary" "$(git rev-parse --short HEAD)" "$GITHUB_RUN_NUMBER" "$run")"
+          request="$(jq -n --arg body "$body" '{body: $body}')"
+
+          id="$(curl -sf -H "$auth" "$api/issues/$number/comments" \
+            | jq -r 'map(select(.user.login == "forge-bot" and (.body | startswith("<!-- derivation-diff -->")))) | first | .id // empty')"
+          if [ -n "$id" ]; then
+            curl -sf -X PATCH -H "$auth" -H "Content-Type: application/json" \
+              -d "$request" "$api/issues/comments/$id" > /dev/null
+            echo "Updated the derivation diff comment on pull request #$number."
+          else
+            curl -sf -H "$auth" -H "Content-Type: application/json" \
+              -d "$request" "$api/issues/$number/comments" > /dev/null
+            echo "Posted the derivation diff comment on pull request #$number."
+          fi
+
+      - name: Pick the list
+        id: list
+        env:
+          ALL: ${{ steps.all.outputs.hosts }}
+          DIFF: ${{ steps.diff.outputs.hosts }}
+        run: echo "hosts=${ALL:-$DIFF}" >> "$GITHUB_OUTPUT"
 
   build:
     needs: hosts
+    if: needs.hosts.outputs.hosts != '[]'
     runs-on: nix
     strategy:
       fail-fast: false
