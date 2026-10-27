@@ -47,11 +47,15 @@ jobs:
           work="$(mktemp -d)"
           git worktree add -q --detach "$work/base" "$base"
 
+          # The two evaluations peak around 14 GB each, so jobs take turns.
+          exec 9> /var/lib/forgejo-runner/builder/eval.lock
+          flock -n 9 || { echo "Waiting for another job's evaluation to finish."; flock 9; }
           drvs='jobs: builtins.mapAttrs (_: job: job.drvPath) jobs'
           nix eval --json "git+file://$work/base#hydraJobs" --apply "$drvs" > "$work/base.json" &
           base_eval=$!
           nix eval --json .#hydraJobs --apply "$drvs" > "$work/head.json"
           wait "$base_eval"
+          exec 9>&-
 
           changed="$(jq -c --slurpfile base "$work/base.json" \
             '[to_entries[] | select(.value != $base[0][.key]) | .key]' "$work/head.json")"

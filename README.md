@@ -78,6 +78,14 @@ is a placeholder, `build (no changed hosts)`, whose steps all skip. Forgejo
 leaves a job with an empty matrix blocked for good, so the placeholder is
 what lets the run finish.
 
+An evaluation of caboodle's `hydraJobs` peaks around 14 GB, and the
+derivation diff runs two at once. Two pull requests diffing together filled
+the builder's memory and wedged it, so the `hosts` job holds a `flock` on
+`/var/lib/forgejo-runner/builder/eval.lock` for those two evaluations, and
+another pull request's job waits its turn. Forgejo ignores `concurrency` on a job, and the
+workflow-level key would also hold back every host build behind it. `flock`
+comes from `util-linux` in the builder's `hostPackages`.
+
 A push to `main` builds every host, and roots each build at
 `/var/lib/forgejo-runner/builder/roots/<repo>/<host>`, so the builder's
 weekly GC keeps it in the cache. A repo calls it from a workflow on
