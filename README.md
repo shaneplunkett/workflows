@@ -78,15 +78,33 @@ is a placeholder, `build (no changed hosts)`, whose steps all skip. Forgejo
 leaves a job with an empty matrix blocked for good, so the placeholder is
 what lets the run finish.
 
-An evaluation of caboodle's `hydraJobs` peaks around 14 GB, and the
-derivation diff runs two at once. Two pull requests diffing together filled
-the builder's memory and wedged it, so the `hosts` job holds a `flock` on
-`/var/lib/forgejo-runner/builder/eval.lock` for those two evaluations, and
-another pull request's job waits its turn. Forgejo ignores `concurrency` on a job, and the
+An evaluation of caboodle's `hydraJobs` peaks around 14 GB and takes about
+two minutes. Two pull requests each running two at once filled the builder's
+memory and wedged it, so the builder now runs one full evaluation at a time,
+and its peak is one evaluation's 14 GB. The `hosts` job holds a `flock` on
+`/var/lib/forgejo-runner/builder/eval.lock` while it evaluates, and another
+job waits its turn. Forgejo ignores `concurrency` on a job, and the
 workflow-level key would also hold back every host build behind it. `flock`
 comes from `util-linux` in the builder's `hostPackages`.
 
-A push to `main` builds every host, and roots each build at
+A push to `main` evaluates every host's derivation and writes the mapping
+to `/var/lib/forgejo-runner/builder/evals/<repo>/<commit>.json`. It writes a
+temp file of its own and renames it into place while it still holds the
+lock, so a reader never sees half of one, even when a re-run of the same
+commit is evaluating too. That makes a push to `main` take about two
+minutes longer to start its builds. A re-run of a commit that already has
+the file reuses it, and the log says `Using the cached evaluation`. A pull
+request usually branches from a commit `main` has built, so it evaluates
+its head, reads the base from that file, and the log says the same. When
+the file is missing, because the base predates the cache, was swept or
+never ran the push build, the log says `No cached evaluation`; a file that
+isn't a non-empty JSON object, say a truncated one, is ignored, and the
+log says `Ignoring the cached evaluation`. Either way the job evaluates
+the base after the head, inside the same lock, and writes the file for
+the next pull request on that base. The caller owns that directory's
+retention; caboodle sweeps it with a tmpfiles age rule.
+
+Then a push to `main` builds every host, and roots each build at
 `/var/lib/forgejo-runner/builder/roots/<repo>/<host>`, so the builder's
 weekly GC keeps it in the cache. A repo calls it from a workflow on
 `pull_request`, plus `push` to `main` if it wants that.

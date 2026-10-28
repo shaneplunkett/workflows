@@ -4,10 +4,14 @@
 # differs between the pull request's merge base and its head. It posts the
 # diff as one comment from forge-bot, edited on each push, and builds only
 # those hosts, since an unchanged host is the very derivation main already
-# built. A push to main builds every host and roots each build in the
-# runner's state directory, under the caller's repo name, so the builder's
-# weekly GC keeps the latest build of each host in the cache. Both go by the
-# ref, because inside a called workflow the event is always workflow_call.
+# built. A push to main evaluates every host's derivation, caching the
+# evaluation for the pull requests based on it, and a re-run reuses that
+# cache. A pull request whose base has no cached evaluation evaluates the base
+# and caches it. Then a push to main builds every host and roots each build in
+# the runner's state directory, under the caller's repo name, so the
+# builder's weekly GC keeps the latest build of each host in the cache. Both
+# go by the ref, because inside a called workflow the event is always
+# workflow_call.
 on:
   workflow_call:
 
@@ -25,7 +29,29 @@ jobs:
       - name: List every host
         id: all
         if: ${{ !startsWith(github.ref, 'refs/pull/') }}
-        run: echo "hosts=$(nix eval --json .#hydraJobs --apply builtins.attrNames)" >> "$GITHUB_OUTPUT"
+        run: |
+          evals="/var/lib/forgejo-runner/builder/evals/${GITHUB_REPOSITORY#*/}"
+          mkdir -p "$evals"
+          sha="$(git rev-parse HEAD)"
+
+          # An evaluation peaks around 14 GB, so jobs take turns. The lock
+          # also covers publishing and reading the file, since a re-run of the
+          # same commit writes the same one.
+          exec 9> /var/lib/forgejo-runner/builder/eval.lock
+          flock -n 9 || { echo "Waiting for another job's evaluation to finish."; flock 9; }
+          if jq -e 'type == "object" and length > 0' "$evals/$sha.json" > /dev/null 2>&1; then
+            echo "Using the cached evaluation of $sha."
+          else
+            tmp="$(mktemp "$evals/$sha.json.XXXXXX")"
+            nix eval --json .#hydraJobs --apply 'jobs: builtins.mapAttrs (_: job: job.drvPath) jobs' \
+              > "$tmp"
+            mv "$tmp" "$evals/$sha.json"
+            echo "Cached the evaluation of $sha for pull requests based on it."
+          fi
+          hosts="$(jq -c keys "$evals/$sha.json")"
+          exec 9>&-
+
+          echo "hosts=$hosts" >> "$GITHUB_OUTPUT"
 
       - name: List the hosts the pull request changes
         id: diff
@@ -47,14 +73,32 @@ jobs:
           work="$(mktemp -d)"
           git worktree add -q --detach "$work/base" "$base"
 
-          # The two evaluations peak around 14 GB each, so jobs take turns.
+          # An evaluation peaks around 14 GB, so they run one at a time, and
+          # jobs take turns. A push to main caches its evaluation, so the base
+          # usually needs none, and a base this job evaluates is cached for the
+          # next pull request on it.
+          evals="/var/lib/forgejo-runner/builder/evals/${GITHUB_REPOSITORY#*/}"
+          mkdir -p "$evals"
+          cached="$evals/$base.json"
           exec 9> /var/lib/forgejo-runner/builder/eval.lock
           flock -n 9 || { echo "Waiting for another job's evaluation to finish."; flock 9; }
           drvs='jobs: builtins.mapAttrs (_: job: job.drvPath) jobs'
-          nix eval --json "git+file://$work/base#hydraJobs" --apply "$drvs" > "$work/base.json" &
-          base_eval=$!
           nix eval --json .#hydraJobs --apply "$drvs" > "$work/head.json"
-          wait "$base_eval"
+          if jq -e 'type == "object" and length > 0' "$cached" > /dev/null 2>&1; then
+            echo "Using the cached evaluation of $base."
+            cp "$cached" "$work/base.json"
+          else
+            if [ -f "$cached" ]; then
+              echo "Ignoring the cached evaluation of $base, which isn't a list of hosts, and evaluating it."
+            else
+              echo "No cached evaluation of $base, evaluating it."
+            fi
+            nix eval --json "git+file://$work/base#hydraJobs" --apply "$drvs" > "$work/base.json"
+            tmp="$(mktemp "$cached.XXXXXX")"
+            cp "$work/base.json" "$tmp"
+            mv "$tmp" "$cached"
+            echo "Cached the evaluation of $base for pull requests based on it."
+          fi
           exec 9>&-
 
           changed="$(jq -c --slurpfile base "$work/base.json" \
