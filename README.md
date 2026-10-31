@@ -23,9 +23,11 @@ A caller on GitHub uses the mirror's name and the GitHub path:
 ```yaml
 jobs:
   hosts:
-    uses: shaneplunkett/workflows/.github/workflows/hosts.yml@v1.8.0
+    uses: shaneplunkett/workflows/.github/workflows/hosts.yml@v2.0.0
     secrets:
       INPUTS_TOKEN: ${{ secrets.INPUTS_TOKEN }}
+      APP_CLIENT_ID: ${{ secrets.APP_CLIENT_ID }}
+      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
 ```
 
 The called workflow runs as the caller: it checks out the caller's repo,
@@ -212,19 +214,39 @@ pushes over the weekly pull request.
 
 ## hosts.yml
 
-On GitHub: evaluates each of the caller's `hydraJobs.<host>` on its own
-hosted runner, since a whole colmena hive can outgrow a runner's 16 GB, and
-writes the host's derivation path, peak memory, elapsed time and free disk
-to the job's summary. A failed or killed evaluation still writes its
-figures, then fails the job. It builds nothing and posts nothing. It takes
-one secret, `INPUTS_TOKEN`, a read-only GitHub token that goes into Nix's
-`access-tokens` for the caller's private flake inputs.
+On GitHub: the derivation diff, the hosts whose `hydraJobs.<host>`
+derivation differs between a pull request's merge base and its head. It's
+`build.yml`'s `hosts` job rebuilt for hosted runners, and builds nothing. A
+whole colmena hive can outgrow a runner's 16 GB, so `list` reads the host
+names with `builtins.attrNames`, which touches no host's config, and each
+host is evaluated in its own `evaluate` job. Each writes its derivation
+path, peak memory and elapsed time to its summary, failed or not, and
+uploads `head-<host>`, a one-day artifact. The `hosts` job gathers them.
 
-The host list comes from `builtins.attrNames` on `hydraJobs`, which touches
-no host's config. Before evaluating, each job deletes the runner's Android,
-.NET, Haskell and tool caches and Docker images. A third-party action did
-that before, but it called another action by a moving tag, so the pin here
-didn't pin everything that ran.
+- **On a push to main** it uploads the mapping of host to derivation path as
+  `hosts-<sha>`, kept 90 days, the most a public repo allows.
+- **On a pull request** it finds main's `hosts-<sha>` for the merge base and
+  compares the head with it. With none, because the base is older than 90
+  days or from before the caller used this, `evaluate-base` evaluates the
+  base in a second matrix once the head's has finished, so a pull request
+  never holds both at once. The diff goes on the pull request as one comment
+  from the caller's GitHub App, starting with `<!-- derivation-diff -->` like
+  `build.yml`'s, and each push edits it.
+
+`hosts` is the one to require. It runs even when an evaluation fails and
+fails itself then, because a required job that's skipped counts as
+passing. Its summary says how many hosts change and where the base came
+from.
+
+It takes three secrets: `INPUTS_TOKEN`, a read-only GitHub token that goes
+into Nix's `access-tokens` for the caller's private flake inputs, and
+`APP_CLIENT_ID` and `APP_PRIVATE_KEY` for the App, which only the comment
+uses. The caller has to grant `actions: read`, for the run that holds the
+merge base's mapping, and should run it on `push` to main and on
+`pull_request`. A pull request's own run can upload an artifact by any
+name, so only a mapping from a run on main is read. A called workflow on
+GitHub sees the caller's event and payload, unlike on Forgejo, so the pull
+request's head and base come straight from `github.event`.
 
 ## Gotchas
 
