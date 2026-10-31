@@ -1,7 +1,9 @@
 # workflows
 
 Forgejo Actions workflows the other repos call, so each one lives in one
-place instead of drifting apart in copies.
+place instead of drifting apart in copies. The forge mirrors this repo to
+`shaneplunkett/workflows` on GitHub on every push, and the workflows under
+`.github/workflows/` are for callers on GitHub, during the move there.
 
 ## Calling one
 
@@ -14,6 +16,16 @@ jobs:
     uses: shane/workflows/.forgejo/workflows/flake-update.yml@v1.0.0
     with:
       notes: scripts/flake-update-notes.sh
+```
+
+A caller on GitHub uses the mirror's name and the GitHub path:
+
+```yaml
+jobs:
+  hosts:
+    uses: shaneplunkett/workflows/.github/workflows/hosts.yml@v1.8.0
+    secrets:
+      INPUTS_TOKEN: ${{ secrets.INPUTS_TOKEN }}
 ```
 
 The called workflow runs as the caller: it checks out the caller's repo,
@@ -57,7 +69,8 @@ It takes `ref` and `fetch-depth`, like `actions/checkout`. A step's `uses:`
 needs the full URL, because a short `owner/repo` is looked up on Forgejo's
 own mirror at `data.forgejo.org`.
 
-The preset keeps Renovate's `actions/checkout` updates below v5. From v5 on,
+The preset keeps Renovate's `actions/checkout` updates in `.forgejo/` below
+v5. From v5 on,
 checkout stores the job's credentials in a separate file that git on the
 host runner never reads, so fetching from the forge fails with
 `could not read Username`. The workflows here pin the same release directly.
@@ -172,6 +185,22 @@ Inputs, all optional:
 A second caller for a few inputs, say one that another repo dispatches when it
 pushes, gives itself its own `branch` and `concurrency` group, so it never
 pushes over the weekly pull request.
+
+## hosts.yml
+
+On GitHub: evaluates each of the caller's `hydraJobs.<host>` on its own
+hosted runner, since a whole colmena hive can outgrow a runner's 16 GB, and
+writes the host's derivation path, peak memory, elapsed time and free disk
+to the job's summary. A failed or killed evaluation still writes its
+figures, then fails the job. It builds nothing and posts nothing. It takes
+one secret, `INPUTS_TOKEN`, a read-only GitHub token that goes into Nix's
+`access-tokens` for the caller's private flake inputs.
+
+The host list comes from `builtins.attrNames` on `hydraJobs`, which touches
+no host's config. Before evaluating, each job deletes the runner's Android,
+.NET, Haskell and tool caches and Docker images. A third-party action did
+that before, but it called another action by a moving tag, so the pin here
+didn't pin everything that ran.
 
 ## Gotchas
 

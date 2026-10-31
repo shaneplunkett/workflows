@@ -2,9 +2,11 @@
 
 Shared Forgejo Actions pieces that other repos on the forge call: reusable
 workflows in `.forgejo/workflows/`, step actions such as `checkout/`, and the
-Renovate preset in `default.json`. The README is the reference for each one,
-its inputs, and the gotchas behind its choices; read the section for the piece
-you're changing first.
+Renovate preset in `default.json`. The forge mirrors the repo to
+`shaneplunkett/workflows` on GitHub on every push, tags included, and
+`.github/workflows/` holds the reusable workflows GitHub callers use. The
+README is the reference for each one, its inputs, and the gotchas behind its
+choices; read the section for the piece you're changing first.
 
 ## Releasing
 
@@ -38,6 +40,8 @@ commit status standing in for the checks.
 
 ## Pins that stay put
 
-`actions/checkout` stays on v4.4.0, through `checkout/` and the preset's
-`allowedVersions`, for the reason in the README. A newer release goes in only
-after a throwaway run proves it can fetch from the forge on the host runner.
+In `.forgejo/`, `actions/checkout` stays on v4.4.0, through `checkout/` and
+the preset's `allowedVersions`, for the reason in the README. A newer
+release goes in only after a throwaway run proves it can fetch from the forge
+on the host runner. GitHub-hosted runners don't have that problem, so
+`.github/` takes new releases.

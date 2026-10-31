@@ -17,9 +17,10 @@
   ],
   "packageRules": [
     {
-      "description": "The pins on shane/workflows move as soon as a tag exists. The tags are made on purpose by the release steps in AGENTS.md, so the release age wait and the Sunday batch guard nothing here.",
+      "description": "The pins on shane/workflows and its GitHub mirror move as soon as a tag exists. The tags are made on purpose by the release steps in AGENTS.md, so the release age wait and the Sunday batch guard nothing here.",
       "matchDepNames": [
-        "shane/workflows"
+        "shane/workflows",
+        "shaneplunkett/workflows"
       ],
       "minimumReleaseAge": null,
       "schedule": [
@@ -38,11 +39,14 @@
       "enabled": false
     },
     {
-      "description": "actions/checkout v5 and later keep the job's credentials where git on the host runner can't read them, so fetching from the forge fails",
+      "description": "actions/checkout v5 and later keep the job's credentials where git on the host runner can't read them, so fetching from the forge fails. GitHub-hosted runners are fine.",
       "matchPackageNames": [
         "actions/checkout"
       ],
-      "allowedVersions": "<5"
+      "allowedVersions": "<5",
+      "matchFileNames": [
+        ".forgejo/**"
+      ]
     }
   ]
 }
