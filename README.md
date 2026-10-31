@@ -75,6 +75,30 @@ checkout stores the job's credentials in a separate file that git on the
 host runner never reads, so fetching from the forge fails with
 `could not read Username`. The workflows here pin the same release directly.
 
+## tailnet
+
+On GitHub: joins the tailnet as an ephemeral `tag:ci` node through
+`tailscale/github-action`, pinned here so every caller runs the same commit.
+Tailscale trusts GitHub's OIDC through a federated identity whose subject is
+the caller's repo, so the job needs `id-token: write` and holds no Tailscale
+secret. The client ID and audience aren't secret either, so callers keep them
+in repository variables:
+
+```yaml
+permissions:
+  contents: read
+  id-token: write
+steps:
+  - uses: shaneplunkett/workflows/tailnet@v1.9.0
+    with:
+      client-id: ${{ vars.TAILSCALE_CLIENT_ID }}
+      audience: ${{ vars.TAILSCALE_AUDIENCE }}
+```
+
+The node is gone from the tailnet once the job ends. The tag is fixed: what a
+job may do is decided by its GitHub Environment, not by a second tag. A pull
+request from a fork gets no OIDC token, so it can't join.
+
 ## build.yml
 
 The build check, and on a pull request the derivation diff: the hosts whose
