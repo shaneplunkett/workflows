@@ -1,12 +1,17 @@
 # workflows
 
-Shared Forgejo Actions pieces that other repos on the forge call: reusable
-workflows in `.forgejo/workflows/`, step actions such as `checkout/`, and the
+Shared Actions pieces that the other repos call, in two trees: reusable
+workflows in `.forgejo/workflows/` for callers on the forge, and the same
+pieces in `.github/workflows/` for callers on GitHub, during the move
+there, plus step actions such as `checkout/` and `tailnet/`, and the
 Renovate preset in `default.json`. The forge mirrors the repo to
-`shaneplunkett/workflows` on GitHub on every push, tags included, and
-`.github/workflows/` holds the reusable workflows GitHub callers use. The
-README is the reference for each one, its inputs, and the gotchas behind its
-choices; read the section for the piece you're changing first.
+`shaneplunkett/workflows` on GitHub on every push, tags included, with
+`--mirror`, so a branch that only exists on GitHub is gone at the next
+push. The README is the reference for each one, its inputs, and the gotchas
+behind its choices; read the section for the piece you're changing first.
+The GitHub workflows use `actions/checkout`, the caller's GitHub App for
+anything that writes, GitHub's API and artifacts; none of the forge's
+runner-side state or `forge-bot`.
 
 ## Releasing
 
@@ -22,9 +27,11 @@ cue, and stays until the last bump is green.
    follow-up fix is a new tag.
 3. Start Renovate (`ssh root@builder systemctl start renovate`). It opens a
    pin bump in every caller that extends the preset, straight away: the
-   preset lifts the release age wait and the Sunday schedule for these pins.
-   Watch them: the release is done when every bump is green, and Shane merges
-   them.
+   preset lifts the release age wait and the Sunday schedule for these pins,
+   on both names, so one run moves a caller's `.forgejo/` and `.github/`
+   pins. Watch them: the release is done when every bump is green, and Shane
+   merges them. (`gh workflow run renovate.yml -R shaneplunkett/caboodle`
+   runs GitHub's Renovate, whose pull requests are a preview until cutover.)
 
 ## Testing before a release
 
@@ -39,6 +46,13 @@ opens its own pull request and leaves the real update alone, and leave
 `automerge` off, since its pull requests always target `main`. Try a merge
 call on its own pull request into a throwaway base instead, with a `pending`
 commit status standing in for the checks.
+
+For a GitHub workflow, push both branches to the forge, which mirrors them,
+never straight to GitHub. Then open the throwaway pull request on the
+mirror (`gh pr create -R shaneplunkett/caboodle`), so `pull_request` runs,
+or dispatch (`gh workflow run <file> -R shaneplunkett/caboodle --ref
+<branch>`), and read the run with `gh run view --log`. Close the pull
+request and delete the forge branches when you're done.
 
 ## Pins that stay put
 

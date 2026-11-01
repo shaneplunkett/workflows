@@ -1,0 +1,89 @@
+# Runs the caller's scripts/check.sh in its flake's dev shell on a hosted
+# runner: the same gate its agents' hooks and pre-commit run, so nothing
+# they'd have caught lands by a route that skips them. The shell carries
+# every tool the script calls, and a tool no public cache has, like an
+# unfree one, would compile here, so with a cache-endpoint the job joins the
+# tailnet and pulls from the caller's Attic first.
+on:
+  workflow_call:
+    inputs:
+      tailnet-client-id:
+        description: The Tailscale federated identity's client ID, for joining the tailnet to reach the cache.
+        type: string
+        default: ""
+      tailnet-audience:
+        description: The federated identity's audience, api.tailscale.com/<client ID>.
+        type: string
+        default: ""
+      cache-endpoint:
+        description: Attic's address on the tailnet, without the cache's name, like http://cache.example.ts.net:8080. Empty pulls from the public caches alone.
+        type: string
+        default: ""
+      cache-name:
+        description: The Attic cache to pull from.
+        type: string
+        default: ""
+      cache-public-key:
+        description: The cache's signing key, as Nix trusts it.
+        type: string
+        default: ""
+      extra-substituters:
+        description: More caches to pull from, space-separated, like the ones the caller's hosts use.
+        type: string
+        default: ""
+      extra-trusted-public-keys:
+        description: The signing keys of extra-substituters, space-separated.
+        type: string
+        default: ""
+    secrets:
+      INPUTS_TOKEN:
+        required: true
+      ATTIC_PULL_TOKEN:
+        required: false
+
+jobs:
+  # Takes the caller's permissions rather than naming its own, since asking
+  # for id-token here would fail every caller that has no cache to reach.
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+        with:
+          github_access_token: ${{ secrets.INPUTS_TOKEN }}
+      # A fork's pull request gets no secrets and no OIDC token, so it pulls
+      # from the public caches alone.
+      - uses: shaneplunkett/workflows/tailnet@v2.0.0
+        if: inputs.cache-endpoint != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        with:
+          client-id: ${{ inputs.tailnet-client-id }}
+          audience: ${{ inputs.tailnet-audience }}
+      - name: Pull from the cache
+        if: inputs.cache-endpoint != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        env:
+          ENDPOINT: ${{ inputs.cache-endpoint }}
+          NAME: ${{ inputs.cache-name }}
+          KEY: ${{ inputs.cache-public-key }}
+          EXTRA: ${{ inputs.extra-substituters }}
+          EXTRA_KEYS: ${{ inputs.extra-trusted-public-keys }}
+          TOKEN: ${{ secrets.ATTIC_PULL_TOKEN }}
+        run: |
+          for var in NAME KEY TOKEN; do
+            test -n "${!var}" || { echo "::error::$var is empty, so the cache can't be read."; exit 1; }
+          done
+          # Nix matches a netrc entry by host alone, and Attic takes the
+          # token as a password.
+          host="${ENDPOINT#*://}"
+          host="${host%%[:/]*}"
+          netrc="$RUNNER_TEMP/netrc"
+          (umask 077 && printf 'machine %s\npassword %s\n' "$host" "$TOKEN" > "$netrc")
+          printf 'extra-substituters = %s\nextra-trusted-public-keys = %s\nnetrc-file = %s\n' \
+            "$ENDPOINT/$NAME $EXTRA" "$KEY $EXTRA_KEYS" "$netrc" | sudo tee -a /etc/nix/nix.conf
+          sudo systemctl restart nix-daemon
+          nix store info --store "$ENDPOINT/$NAME"
+
+      - name: scripts/check.sh
+        run: nix --option warn-dirty false develop --command scripts/check.sh

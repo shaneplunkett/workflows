@@ -3,7 +3,10 @@
 Forgejo Actions workflows the other repos call, so each one lives in one
 place instead of drifting apart in copies. The forge mirrors this repo to
 `shaneplunkett/workflows` on GitHub on every push, and the workflows under
-`.github/workflows/` are for callers on GitHub, during the move there.
+`.github/workflows/` are the same pieces for callers on GitHub, during the
+move there: `check.yml`, `flake-update.yml` and `hosts.yml`, which is
+`build.yml` rebuilt for hosted runners. `tailnet/` joins a hosted runner
+to the tailnet, and `checkout/` is the forge's checkout.
 
 ## Calling one
 
@@ -41,19 +44,24 @@ caller's `renovate.json` extends this repo's preset:
 
 ```json
 {
-  "extends": ["local>shane/workflows"]
+  "extends": ["github>shaneplunkett/workflows"]
 }
 ```
 
-`default.json` is that preset. It reads the pins with the `forgejo-tags`
-datasource, and turns off the `github-actions` manager's lookup for
-`shane/workflows`, which goes to github.com, where `shane` is someone else.
-A repo that only wants its pins bumped also sets
-`"enabledManagers": ["custom.regex"]`. The preset also lifts the builder's
-one-day release age and Sunday schedule for these pins, so a bump opens
-as soon as Renovate runs after a tag: the tags are made on purpose, so the
-wait guards nothing, and without it a tag made after Sunday morning trailed
-by a week.
+That name resolves on both forges; `local>shane/workflows` looks for
+`shane` on GitHub, where it's someone else, so GitHub's Renovate rejects
+the config. `default.json` is that preset. It reads the forge pins with the
+`forgejo-tags` datasource, and turns off the `github-actions` manager's
+lookup for `shane/workflows`, which goes to github.com. A caller on
+GitHub pins `shaneplunkett/workflows`, which the `github-actions` manager
+reads from GitHub's tags on its own. A repo that only wants its pins
+bumped also sets `"enabledManagers": ["custom.regex"]`. The preset also
+lifts the one-day release age and Sunday schedule for the pins on either
+name, so a bump opens as soon as Renovate runs after a tag: the tags are
+made on purpose, so the wait guards nothing, and without it a tag made
+after Sunday morning trailed by a week. A caller that groups its workflow
+actions into one pull request keeps these out of the group, so a release
+lands on its own.
 
 ## checkout
 
@@ -180,6 +188,41 @@ jobs:
     uses: shane/workflows/.forgejo/workflows/check.yml@v1.4.0
 ```
 
+On GitHub, `.github/workflows/check.yml` runs the same script on a hosted
+runner. A tool no public cache has, an unfree one like Terraform or a
+fork, would compile there on every run, so the job joins the tailnet with
+`tailnet` and pulls from the caller's Attic first, the way `hosts.yml`
+does, given the same `cache-*` and `tailnet-*` inputs and
+`ATTIC_PULL_TOKEN`. Without a `cache-endpoint` it pulls from the public
+caches alone. A fork's pull request has no secrets and no OIDC token, so it
+skips the cache either way. The job takes the caller's permissions, so a
+caller with a cache grants `id-token: write`. Pin it from its own workflow,
+since the triggers belong to the caller:
+
+```yaml
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  check:
+    uses: shaneplunkett/workflows/.github/workflows/check.yml@v2.3.0
+    with:
+      tailnet-client-id: ${{ vars.TAILSCALE_CLIENT_ID }}
+      tailnet-audience: ${{ vars.TAILSCALE_AUDIENCE }}
+      cache-endpoint: http://cache.example.ts.net:8080
+      cache-name: shane
+      cache-public-key: shane:...
+    secrets:
+      INPUTS_TOKEN: ${{ secrets.INPUTS_TOKEN }}
+      ATTIC_PULL_TOKEN: ${{ secrets.ATTIC_PULL_TOKEN }}
+```
+
 ## flake-update.yml
 
 The `nix flake update` pull request, opened as `forge-bot`. A repo calls it
@@ -212,12 +255,56 @@ A second caller for a few inputs, say one that another repo dispatches when it
 pushes, gives itself its own `branch` and `concurrency` group, so it never
 pushes over the weekly pull request.
 
+On GitHub, `.github/workflows/flake-update.yml` opens the pull request as
+the caller's GitHub App, from `APP_CLIENT_ID` and `APP_PRIVATE_KEY`, and
+asks `reviewer`, by default `shaneplunkett`, since a pull request can't
+ask its own author. The lock commit is the App's too, authored with its
+bot user's noreply address. It takes `title`, `reviewer`, `branch`,
+`notes` and `only` like the forge's, and `INPUTS_TOKEN` for the private
+inputs, and builds nothing: the pull request's own `hosts.yml` run says
+which hosts change and builds them, so the description has the
+changelogs, the moved inputs and the lock file, and not the package
+changes or new evaluation warnings the forge's run gets from building
+every host before and after. A notes script that fails leaves a line
+pointing at the run in the description and fails the job. Until cutover,
+the forge's push mirror deletes any GitHub branch the forge lacks, so a
+caller gives the update a `branch` the forge never pushes, like
+`update-github/flake-lock`, and its pull request still closes at the
+forge's next push.
+
+```yaml
+on:
+  schedule:
+    - cron: "0 11 * * 5"
+  workflow_dispatch:
+
+concurrency:
+  group: flake-update
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    uses: shaneplunkett/workflows/.github/workflows/flake-update.yml@v2.3.0
+    with:
+      notes: scripts/flake-update-notes.sh
+    secrets:
+      INPUTS_TOKEN: ${{ secrets.INPUTS_TOKEN }}
+      APP_CLIENT_ID: ${{ secrets.APP_CLIENT_ID }}
+      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+```
+
 ## hosts.yml
 
 On GitHub: the derivation diff, the hosts whose `hydraJobs.<host>`
 derivation differs between a baseline and the head, and with `build` on, a
 build of each changed host pushed to the caller's Attic. It's `build.yml`
-rebuilt for hosted runners. A whole colmena hive can outgrow a runner's
+rebuilt for hosted runners. Any repo whose flake has a `hydraJobs`
+attribute set, one system derivation per host, can call it; it assumes
+nothing else about the caller, and a caller that only wants the diff
+leaves `build` off and passes `INPUTS_TOKEN` and the App's two secrets. A whole colmena hive can outgrow a runner's
 16 GB, so `list` reads the host names with `builtins.attrNames`, which
 touches no host's config, and each host gets its own `evaluate` job, on
 `ubuntu-latest` unless `runners` names another for it.
@@ -362,6 +449,8 @@ nix shell nixpkgs#jq nixpkgs#yq-go -c tests/hosts.sh
 
 ## Gotchas
 
+### On the forge
+
 - **The `shane` org has to stay public.** Forgejo only expands a workflow
   from another repo when the owner is public, and it reports anything else as
   `failed to access user shane: user does not exist`. It's harmless here,
@@ -376,11 +465,31 @@ nix shell nixpkgs#jq nixpkgs#yq-go -c tests/hosts.sh
 - **Only literals reach a called workflow's inputs.** Forgejo expands it on
   the server without the `github` context, so `with: { x: ${{ github.* }} }`
   arrives empty and the input falls back to its default.
-- **A shallow checkout hides its history from a git worktree.** Nix then goes
-  looking for the parent commit and fails, so flake refs into a worktree of
-  the checkout say `?shallow=1`.
 - **`nix build -o` makes a GC root.** The before and after builds in
   `flake-update.yml` link every host's closure from a temp dir, which pins
   them until the dir is gone, so its last step deletes the dir even when an
   earlier one failed. The runner's `TMPDIR` is in its state directory, swept
   a day later, not the private `/tmp` that a restart empties.
+
+### On GitHub
+
+- **A called workflow sees the caller's event.** `github.event_name` and
+  `github.event` inside it are the caller's `push` or `pull_request`, and
+  `with:` takes expressions, so the GitHub workflows read the pull
+  request's head and base straight from the payload.
+- **The mirror deletes what the forge doesn't have.** The forge pushes with
+  `--mirror`, so a branch pushed straight to `shaneplunkett/workflows` or a
+  caller's mirror lasts until the forge's next push. Test branches go to the
+  forge, and the pull requests the GitHub `flake-update.yml` opens close
+  then too, until cutover.
+- **The workflows here pin this repo like a caller does.** `hosts.yml` and
+  `check.yml` use `shaneplunkett/workflows/tailnet@<tag>`, since a called
+  workflow has no path to its own checkout, so a change to `tailnet/`
+  reaches them a release after it's tagged, when Renovate bumps that pin
+  here.
+
+### Anywhere
+
+- **A shallow checkout hides its history from a git worktree.** Nix then goes
+  looking for the parent commit and fails, so flake refs into a worktree of
+  the checkout say `?shallow=1`.
