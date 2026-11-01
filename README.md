@@ -215,38 +215,100 @@ pushes over the weekly pull request.
 ## hosts.yml
 
 On GitHub: the derivation diff, the hosts whose `hydraJobs.<host>`
-derivation differs between a pull request's merge base and its head. It's
-`build.yml`'s `hosts` job rebuilt for hosted runners, and builds nothing. A
-whole colmena hive can outgrow a runner's 16 GB, so `list` reads the host
-names with `builtins.attrNames`, which touches no host's config, and each
-host is evaluated in its own `evaluate` job. Each writes its derivation
-path, peak memory and elapsed time to its summary, failed or not, and
-uploads `head-<host>`, a one-day artifact. The `hosts` job gathers them.
+derivation differs between a baseline and the head, and with `build` on, a
+build of each changed host pushed to the caller's Attic. It's `build.yml`
+rebuilt for hosted runners. A whole colmena hive can outgrow a runner's
+16 GB, so `list` reads the host names with `builtins.attrNames`, which
+touches no host's config, and each host gets its own `evaluate` job.
 
-- **On a push to main** it uploads the mapping of host to derivation path as
-  `hosts-<sha>`, kept 90 days, the most a public repo allows.
-- **On a pull request** it finds main's `hosts-<sha>` for the merge base and
-  compares the head with it. With none, because the base is older than 90
-  days or from before the caller used this, `evaluate-base` evaluates the
-  base in a second matrix once the head's has finished, so a pull request
-  never holds both at once. The diff goes on the pull request as one comment
-  from the caller's GitHub App, starting with `<!-- derivation-diff -->` like
-  `build.yml`'s, and each push edits it.
+`list` resolves the baseline first: a pull request's merge base, or with
+`build` on, the commit before a push to main. It reads main's `hosts-<sha>`
+mapping for that commit. With none, because it's older than 90 days or from
+before the caller used this, `evaluate-base` evaluates the baseline in its
+own matrix before the head's starts, so a run never holds both at once. A
+push with no commit before it has no baseline, and every host counts as
+changed.
 
-`hosts` is the one to require. It runs even when an evaluation fails and
-fails itself then, because a required job that's skipped counts as
-passing. Its summary says how many hosts change and where the base came
-from.
+Each `evaluate` job evaluates its host once. The installer's pin pins Nix
+too, to 2.35.4, which writes the derivation into the store as it evaluates,
+and the job checks it's there. It compares the path with the baseline's,
+writes the path, peak memory, elapsed time and whether it builds to its
+summary, and uploads `head-<host>`, a one-day artifact, before building
+anything, so a build that fails still leaves its evaluation in the diff.
+Then, with `build` on, a changed host the runner can build, which is
+`x86_64-linux`, frees disk, joins the tailnet with `tailnet`, adds the
+cache as a substituter with the pull token in Nix's netrc, and builds that
+same derivation's outputs without evaluating the flake again. A dry run
+first logs how many derivations will build and how many paths will be
+fetched, so a run that only substitutes says so. It pushes the closure with
+`attic push`, which fails the job if any upload does, and uploads
+`built-<host>`. An unchanged host, a Mac, and every host on a fork's pull
+request stop after evaluating.
 
-It takes three secrets: `INPUTS_TOKEN`, a read-only GitHub token that goes
-into Nix's `access-tokens` for the caller's private flake inputs, and
-`APP_CLIENT_ID` and `APP_PRIVATE_KEY` for the App, which only the comment
-uses. The caller has to grant `actions: read`, for the run that holds the
-merge base's mapping, and should run it on `push` to main and on
-`pull_request`. A pull request's own run can upload an artifact by any
-name, so only a mapping from a run on main is read. A called workflow on
-GitHub sees the caller's event and payload, unlike on Forgejo, so the pull
-request's head and base come straight from `github.event`.
+The `hosts` job runs after them all, so on a pull request the comment
+arrives after the slowest build. It gathers the evaluations and builds and
+writes the diff: the hosts that change, any removed, and with `build` on,
+which built and pushed, which failed and which weren't built here. It goes
+on the pull request as one comment from the caller's GitHub App, starting
+with `<!-- derivation-diff -->` like `build.yml`'s, and each push edits it.
+A push to main uploads the mapping as `hosts-<sha>`, kept 90 days, the most
+a public repo allows, as long as every host evaluated.
+
+`hosts` is the one to require. It runs whatever happened before it, because
+a required job that's skipped counts as passing, and fails when a host
+didn't evaluate, at either end, or didn't build or push. A failed build
+still gets the full diff. A host that didn't evaluate is named in the
+comment as missing, rather than left out of a diff that looks complete.
+
+A rerun builds the changed hosts again, and with the closure already in the
+cache, that's all fetching: the dry run's count of builds is zero. Checking
+the cache instead would need every path in the closure, since one cached
+top-level path doesn't say its dependencies are there too.
+
+```yaml
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+jobs:
+  hosts:
+    uses: shaneplunkett/workflows/.github/workflows/hosts.yml@v2.1.0
+    with:
+      build: true
+      tailnet-client-id: ${{ vars.TAILSCALE_CLIENT_ID }}
+      tailnet-audience: ${{ vars.TAILSCALE_AUDIENCE }}
+      cache-endpoint: http://cache.example.ts.net:8080
+      cache-name: shane
+      cache-public-key: shane:...
+    secrets:
+      INPUTS_TOKEN: ${{ secrets.INPUTS_TOKEN }}
+      APP_CLIENT_ID: ${{ secrets.APP_CLIENT_ID }}
+      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+      ATTIC_PULL_TOKEN: ${{ secrets.ATTIC_PULL_TOKEN }}
+      ATTIC_PUSH_TOKEN: ${{ secrets.ATTIC_PUSH_TOKEN }}
+```
+
+`INPUTS_TOKEN` is a read-only GitHub token that goes into Nix's
+`access-tokens` for the caller's private flake inputs, and `APP_CLIENT_ID`
+and `APP_PRIVATE_KEY` are the App's, which only the comment uses. Building
+also takes the two Attic tokens: the pull token in the netrc, and the push
+token only in the push step's own config. `attic-client` names the client
+to push with, read through `--inputs-from .`, so it's the one the caller's
+`flake.lock` pins, by default `nixpkgs#attic-client`.
+
+The caller has to grant `actions: read`, for the run that holds the
+baseline's mapping, and `id-token: write` to build, for the tailnet. The
+`evaluate` jobs take the caller's permissions instead of naming their own,
+because a called job that asks for more than the caller granted fails the
+whole run, so a caller that only wants the diff leaves `build` off and
+grants no `id-token`. Run it on `push` to main and on `pull_request`, with
+the build jobs' runner time in mind: `evaluate` gets six hours with `build`
+on, the most a hosted job can have. A pull request's own run can upload an
+artifact by any name, so only a mapping from a run on main is read. A
+called workflow on GitHub sees the caller's event and payload, unlike on
+Forgejo, so the pull request's head and base come straight from
+`github.event`.
 
 ## Gotchas
 
