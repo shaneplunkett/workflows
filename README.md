@@ -237,10 +237,13 @@ summary, and uploads `head-<host>`, a one-day artifact, before building
 anything, so a build that fails still leaves its evaluation in the diff.
 Then, with `build` on, a changed host the runner can build, which is
 `x86_64-linux`, frees disk, joins the tailnet with `tailnet`, adds the
-cache as a substituter with the pull token in Nix's netrc, and builds that
-same derivation's outputs without evaluating the flake again. A dry run
-first logs how many derivations will build and how many paths will be
-fetched, so a run that only substitutes says so. It pushes the closure with
+cache as a substituter with the pull token in Nix's netrc, along with
+`extra-substituters`, and builds that same derivation's outputs without
+evaluating the flake again. A dry run first logs how many derivations will
+build, how many paths will be fetched, and how many Nix "doesn't know how
+to build": paths no cache has whose derivation it can't place, which it
+then builds anyway. Those get a warning, since they usually mean a missing
+cache. A run that only substitutes says 0 and 0. It pushes the closure with
 `attic push`, which fails the job if any upload does, and uploads
 `built-<host>`. An unchanged host, a Mac, and every host on a fork's pull
 request stop after evaluating.
@@ -290,6 +293,8 @@ jobs:
       cache-endpoint: http://cache.example.ts.net:8080
       cache-name: shane
       cache-public-key: shane:...
+      extra-substituters: https://nix-community.cachix.org
+      extra-trusted-public-keys: nix-community.cachix.org-1:...
     secrets:
       INPUTS_TOKEN: ${{ secrets.INPUTS_TOKEN }}
       APP_CLIENT_ID: ${{ secrets.APP_CLIENT_ID }}
@@ -305,6 +310,12 @@ also takes the two Attic tokens: the pull token in the netrc, and the push
 token only in the push step's own config. `attic-client` names the client
 to push with, read through `--inputs-from .`, so it's the one the caller's
 `flake.lock` pins, by default `nixpkgs#attic-client`.
+
+`extra-substituters` and `extra-trusted-public-keys`, space-separated, are
+the other caches the caller's hosts pull from. Give the runner every
+upstream the Attic cache filters against: Attic leaves out whatever one of
+them signed, so a runner without that upstream builds it from source. An
+unfree package is the usual case, since cache.nixos.org never has one.
 
 The caller has to grant `actions: read`, for the run that holds the
 baseline's mapping, and `id-token: write` to build, for the tailnet. The
