@@ -56,7 +56,7 @@ jobs:
           github_access_token: ${{ secrets.INPUTS_TOKEN }}
       # A fork's pull request gets no secrets and no OIDC token, so it pulls
       # from the public caches alone.
-      - uses: shaneplunkett/workflows/tailnet@v2.0.0
+      - uses: shaneplunkett/workflows/tailnet@v2.3.0
         if: inputs.cache-endpoint != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         with:
           client-id: ${{ inputs.tailnet-client-id }}
