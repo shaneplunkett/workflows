@@ -219,7 +219,8 @@ derivation differs between a baseline and the head, and with `build` on, a
 build of each changed host pushed to the caller's Attic. It's `build.yml`
 rebuilt for hosted runners. A whole colmena hive can outgrow a runner's
 16 GB, so `list` reads the host names with `builtins.attrNames`, which
-touches no host's config, and each host gets its own `evaluate` job.
+touches no host's config, and each host gets its own `evaluate` job, on
+`ubuntu-latest` unless `runners` names another for it.
 
 `list` resolves the baseline first: a pull request's merge base, or with
 `build` on, the commit before a push to main. It reads main's `hosts-<sha>`
@@ -235,18 +236,33 @@ and the job checks it's there. It compares the path with the baseline's,
 writes the path, peak memory, elapsed time and whether it builds to its
 summary, and uploads `head-<host>`, a one-day artifact, before building
 anything, so a build that fails still leaves its evaluation in the diff.
-Then, with `build` on, a changed host the runner can build, which is
-`x86_64-linux`, frees disk, joins the tailnet with `tailnet`, adds the
-cache as a substituter with the pull token in Nix's netrc, along with
-`extra-substituters`, and builds that same derivation's outputs without
+Then, with `build` on, a changed host the runner can build, one whose
+system is the runner's own, frees disk, joins the tailnet with `tailnet`,
+adds the cache as a substituter with the pull token in Nix's netrc, along
+with `extra-substituters`, and builds that same derivation's outputs without
 evaluating the flake again. A dry run first logs how many derivations will
 build, how many paths will be fetched, and how many Nix "doesn't know how
 to build": paths no cache has whose derivation it can't place, which it
 then builds anyway. Those get a warning, since they usually mean a missing
-cache. A run that only substitutes says 0 and 0. It pushes the closure with
-`attic push`, which fails the job if any upload does, and uploads
-`built-<host>`. An unchanged host, a Mac, and every host on a fork's pull
-request stop after evaluating.
+cache. A run that only substitutes says 0 and 0. The summary has the
+closure's size and the build's peak disk use, sampled every two seconds, and
+the peak is there even when the build runs out of disk. It pushes the
+closure with `attic push`, which fails the job if any upload does, and
+uploads `built-<host>`. An unchanged host, a host on a runner of another
+system, and every host on a fork's pull request stop after evaluating.
+
+`runners` maps a host to the runner its head job uses, as JSON, like
+`{"macbook": "macos-latest"}`, so a Mac evaluates and builds on macOS. The
+derivation path doesn't depend on where it's evaluated, so the baseline
+still evaluates on Linux and the comparison holds. `list` doesn't read each
+host's system, since that would evaluate every host's config in one
+process, so the caller names them. A host listed on the wrong runner
+doesn't build, and the comment says it wasn't built here. On macOS the job
+reclaims disk by deleting every Xcode but the selected one, the simulator
+runtimes, the Android SDK, .NET and the tool cache. Nix builds with its
+own SDK, and the selected Xcode stays for anything that still calls
+`xcrun`. A hosted macOS runner has 7 GB of memory and 3 cores, so a Mac's
+evaluation and build are tighter there than on Linux.
 
 The `hosts` job runs after them all, so on a pull request the comment
 arrives after the slowest build. It gathers the evaluations and builds and
@@ -295,6 +311,7 @@ jobs:
       cache-public-key: shane:...
       extra-substituters: https://nix-community.cachix.org
       extra-trusted-public-keys: nix-community.cachix.org-1:...
+      runners: '{"macbook": "macos-latest"}'
     secrets:
       INPUTS_TOKEN: ${{ secrets.INPUTS_TOKEN }}
       APP_CLIENT_ID: ${{ secrets.APP_CLIENT_ID }}
