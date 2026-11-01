@@ -51,7 +51,10 @@ For a GitHub workflow, push both branches to the forge, which mirrors them,
 never straight to GitHub. Then open the throwaway pull request on the
 mirror (`gh pr create -R shaneplunkett/caboodle`), so `pull_request` runs,
 or dispatch (`gh workflow run <file> -R shaneplunkett/caboodle --ref
-<branch>`), and read the run with `gh run view --log`. Close the pull
+<branch>`), and read the run with `gh run view --log`. GitHub finds a
+dispatched workflow by its file name on the default branch and then runs
+the file at your ref, so a caller that's new on your branch borrows the
+name of one `main` has, say `tailnet.yml`, for the test. Close the pull
 request and delete the forge branches when you're done.
 
 ## Pins that stay put
