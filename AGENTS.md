@@ -28,7 +28,9 @@ cue, and stays until the last bump is green.
 
 ## Testing before a release
 
-Nothing here runs until a caller uses it. Push the change on a branch, then
+`tests/` holds what can run without a caller, and the pull request's
+`test` check runs it; extend `tests/hosts.sh` when you change the diff
+step's logic. Everything else runs only once a caller uses it. Push the change on a branch, then
 push a throwaway branch in a caller repo (caboodle) with a
 `workflow_dispatch` workflow that uses this repo at your branch. Dispatch it,
 read the run's log, then delete both throwaway branches. Give

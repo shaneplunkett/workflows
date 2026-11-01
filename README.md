@@ -256,9 +256,18 @@ a public repo allows, as long as every host evaluated.
 
 `hosts` is the one to require. It runs whatever happened before it, because
 a required job that's skipped counts as passing, and fails when a host
-didn't evaluate, at either end, or didn't build or push. A failed build
-still gets the full diff. A host that didn't evaluate is named in the
-comment as missing, rather than left out of a diff that looks complete.
+didn't evaluate, at either end, or didn't build or push, or when the
+baseline's matrix failed. A failed build still gets the full diff. When an
+evaluation is missing, the comment leads with "Incomplete diff", names the
+hosts it can't speak for, and only lists changes among the rest.
+
+A rerun keeps the artifacts of the attempt before it, and an upload step
+that never runs leaves the old artifact in place, so a rerun that fails
+could otherwise show the last attempt's build. Each head job uploads
+`start-<host>` with its attempt number before anything else, and stamps its
+plan and build records with it too. `hosts` only counts a host's records
+from the attempt its marker names. Re-running only the failed jobs keeps
+the others' records, since their markers still name the first attempt.
 
 A rerun builds the changed hosts again, and with the closure already in the
 cache, that's all fetching: the dry run's count of builds is zero. Checking
@@ -309,6 +318,19 @@ artifact by any name, so only a mapping from a run on main is read. A
 called workflow on GitHub sees the caller's event and payload, unlike on
 Forgejo, so the pull request's head and base come straight from
 `github.event`.
+
+## Tests
+
+`tests/hosts.sh` runs `hosts.yml`'s "Work out the diff" step, pulled out of
+the workflow with `yq`, against artifacts it makes up, and checks the
+outputs and the summary: a build, no change, failures at the head and the
+baseline, the rerun cases above, and a push with no baseline.
+`.forgejo/workflows/test.yml` runs it on every pull request here. To run it
+yourself:
+
+```sh
+nix shell nixpkgs#jq nixpkgs#yq-go -c tests/hosts.sh
+```
 
 ## Gotchas
 

@@ -1,0 +1,14 @@
+# This repo's own check, unlike the reusable workflows beside it: runs the
+# tests in tests/ on every pull request here.
+on:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: nix
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Test hosts.yml's diff
+        run: nix shell nixpkgs#jq nixpkgs#yq-go -c tests/hosts.sh
