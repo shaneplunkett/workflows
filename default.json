@@ -1,52 +1,13 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "Bump the pins on shane/workflows from the forge's own tags",
-  "customManagers": [
-    {
-      "customType": "regex",
-      "description": "Workflows called from shane/workflows",
-      "managerFilePatterns": [
-        "/(^|/)\\.forgejo/workflows/[^/]+\\.ya?ml$/"
-      ],
-      "matchStrings": [
-        "uses: (?:https://git\\.shaneplunkett\\.com/)?(?<depName>shane/workflows)/\\S+@(?<currentValue>v\\d+\\.\\d+\\.\\d+)"
-      ],
-      "datasourceTemplate": "forgejo-tags",
-      "registryUrlTemplate": "https://git.shaneplunkett.com"
-    }
-  ],
+  "description": "Shared Renovate settings for the repos that call shaneplunkett/workflows",
   "packageRules": [
     {
-      "description": "The pins on shane/workflows and its GitHub mirror move as soon as a tag exists. The tags are made on purpose by the release steps in AGENTS.md, so the release age wait and the Sunday batch guard nothing here.",
+      "description": "The pins on shaneplunkett/workflows skip the release age wait. Its tags are made on purpose by the release steps in AGENTS.md, so the wait guards nothing.",
       "matchDepNames": [
-        "shane/workflows",
         "shaneplunkett/workflows"
       ],
-      "minimumReleaseAge": null,
-      "schedule": [
-        "at any time"
-      ]
-    },
-    {
-      "description": "The custom manager reads shane/workflows from the forge's tags. github-actions would look the short form up on github.com, where shane is someone else.",
-      "matchManagers": [
-        "github-actions"
-      ],
-      "matchDepNames": [
-        "shane/workflows",
-        "https://git.shaneplunkett.com/shane/workflows"
-      ],
-      "enabled": false
-    },
-    {
-      "description": "actions/checkout v5 and later keep the job's credentials where git on the host runner can't read them, so fetching from the forge fails. GitHub-hosted runners are fine.",
-      "matchPackageNames": [
-        "actions/checkout"
-      ],
-      "allowedVersions": "<5",
-      "matchFileNames": [
-        ".forgejo/**"
-      ]
+      "minimumReleaseAge": null
     }
   ]
 }

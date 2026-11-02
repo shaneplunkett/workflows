@@ -4,10 +4,9 @@
 # request checks run on its real head from the start, and the App can ask
 # the reviewer, which a pull request's own author can't. Then it fills the
 # description in with each moved input and the changelogs the caller's notes
-# script prints. It builds nothing: the caller's hosts.yml run on the pull
-# request says which hosts change and builds them. The caller owns the
-# schedule and the concurrency group, so a second run cancels the first
-# rather than racing it to push.
+# script prints. It builds nothing. The caller owns the schedule and the
+# concurrency group, so a second run cancels the first rather than racing it
+# to push.
 on:
   workflow_call:
     inputs:
@@ -76,8 +75,8 @@ jobs:
         run: |
           work="$(mktemp -d)"
           echo "WORK=$work" >> "$GITHUB_ENV"
-          # The commit is the App's, so GitHub shows it as the App and the
-          # mirror takes it: the bot user's noreply address carries its id.
+          # The commit is the App's, so GitHub shows it as the App: the bot
+          # user's noreply address carries its id.
           id="$(gh api "users/$SLUG%5Bbot%5D" --jq .id)"
           git config user.name "${SLUG}[bot]"
           git config user.email "$id+${SLUG}[bot]@users.noreply.github.com"
