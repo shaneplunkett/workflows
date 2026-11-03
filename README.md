@@ -82,9 +82,10 @@ by default and phones a diagnostics endpoint.
 - **The key** hashes every `flake.lock` and `.nix` file. A miss restores the
   newest entry by prefix, so a lock bump builds only what moved. If nixpkgs
   moves Terraform, Terraform compiles again.
-- **The cap** is 2 GB of store before saving, about 800 MB compressed.
-  `nix develop --profile` roots the dev shell, so garbage collection takes
-  everything else first and never the shell. Only a passing run saves.
+- **The cap** is a target: garbage collection aims for 2 GB of store before
+  saving, and `nix develop --profile` roots the dev shell, so it takes
+  everything else first and never the shell, even when the shell alone is
+  over. caboodle's compresses to about 800 MB. Only a passing run saves.
 - **The purge** deletes a ref's older entries each time that ref runs, and
   never its current key. It can't touch other refs, so a closed pull
   request's entry waits for GitHub, which drops entries unused for seven days
