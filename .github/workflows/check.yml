@@ -1,8 +1,13 @@
 # Runs the caller's scripts/check.sh in its flake's dev shell on a hosted
 # runner: the same gate its agents' hooks and pre-commit run, so nothing
 # they'd have caught lands by a route that skips them. The shell carries
-# every tool the script calls, pulled from the public caches, and a tool
-# none of them has, like an unfree one, compiles here on every run.
+# every tool the script calls, pulled from the public caches. A tool none of
+# them has, like unfree Terraform, compiles here, so GitHub's Actions cache
+# holds the Nix store between runs and that compile happens once per change
+# to it. The cache stays on GitHub because the check runs outside the house
+# on purpose: a merge never waits on the homelab. The profile roots the dev
+# shell, so the store cap collects everything else first, and the purge
+# needs actions: write from the caller.
 on:
   workflow_call:
     secrets:
@@ -13,6 +18,9 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -20,6 +28,15 @@ jobs:
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
         with:
           github_access_token: ${{ secrets.INPUTS_TOKEN }}
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/flake.lock', '**/*.nix') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 2G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
 
       - name: scripts/check.sh
-        run: nix --option warn-dirty false develop --command scripts/check.sh
+        run: nix --option warn-dirty false develop --profile "$RUNNER_TEMP/dev-shell" --command scripts/check.sh

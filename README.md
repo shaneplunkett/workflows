@@ -11,9 +11,13 @@ Pin a tag, not `main`, so a change here reaches a repo only when that repo
 moves its pin:
 
 ```yaml
+permissions:
+  contents: read
+  actions: write
+
 jobs:
   check:
-    uses: shaneplunkett/workflows/.github/workflows/check.yml@v3.0.0
+    uses: shaneplunkett/workflows/.github/workflows/check.yml@v4.0.0
     secrets:
       INPUTS_TOKEN: ${{ secrets.INPUTS_TOKEN }}
 ```
@@ -42,8 +46,8 @@ callers, like ai-skills: they're bumped by hand.
 Runs the caller's `scripts/check.sh` inside its flake's default dev shell,
 as one check. That script is the caller's one gate, the same one its
 agents' Stop hook and pre-commit run, so the shell has to carry every tool
-it calls. The shell comes from the public caches, so a tool none of them
-has, an unfree one like Terraform, compiles on every run. Call it from its
+it calls. The shell comes from the public caches, and a tool none of them
+has, an unfree one like Terraform, compiles on the runner. Call it from its
 own workflow:
 
 ```yaml
@@ -54,13 +58,38 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 jobs:
   check:
-    uses: shaneplunkett/workflows/.github/workflows/check.yml@v3.0.0
+    uses: shaneplunkett/workflows/.github/workflows/check.yml@v4.0.0
     secrets:
       INPUTS_TOKEN: ${{ secrets.INPUTS_TOKEN }}
 ```
+
+`actions: write` is required: a caller without it fails at startup with no
+jobs run. The purge below needs it to delete cache entries.
+
+### The cache
+
+`nix-community/cache-nix-action` keeps the Nix store in GitHub's Actions
+cache, so what the runner compiled comes back on the next run. Caches belong
+to the repo, so each caller pays for and benefits from its own. The home
+cache can't do this job, since the check runs outside the house so a merge
+never waits on the homelab. Magic Nix Cache could, but it uploads to FlakeHub
+by default and phones a diagnostics endpoint.
+
+- **The key** hashes every `flake.lock` and `.nix` file. A miss restores the
+  newest entry by prefix, so a lock bump builds only what moved. If nixpkgs
+  moves Terraform, Terraform compiles again.
+- **The cap** is 2 GB of store before saving, about 800 MB compressed.
+  `nix develop --profile` roots the dev shell, so garbage collection takes
+  everything else first and never the shell. Only a passing run saves.
+- **The purge** deletes a ref's older entries each time that ref runs, and
+  never its current key. It can't touch other refs, so a closed pull
+  request's entry waits for GitHub, which drops entries unused for seven days
+  and the least recently used ones past 10 GB. `main`'s entry stays in use,
+  because pull requests restore from it.
 
 ## flake-update.yml
 
@@ -107,7 +136,7 @@ permissions:
 
 jobs:
   update:
-    uses: shaneplunkett/workflows/.github/workflows/flake-update.yml@v3.0.0
+    uses: shaneplunkett/workflows/.github/workflows/flake-update.yml@v4.0.0
     with:
       notes: scripts/flake-update-notes.sh
     secrets:
